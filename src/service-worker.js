@@ -16,6 +16,31 @@ async function focusTab(tabId) {
   } catch (_) { /* the Amity tab may have been closed */ }
 }
 
+const AMITY_TAB_MATCHES = [
+  'http://localhost:3000/*',
+  'https://amityatlas-dev.web.app/*',
+  'https://*.amityatlas.com/*',
+];
+
+// Chrome only auto-runs a declared content_scripts entry on a tab's next
+// navigation. A tab that was already open (e.g. the Amity app the user was
+// using) when this extension was installed/reloaded never gets amity-bridge.js
+// injected, so its detection ping goes unanswered until the user manually
+// reloads. Inject it into any already-open matching tab right away instead.
+async function injectIntoExistingAmityTabs() {
+  const tabs = await chrome.tabs.query({ url: AMITY_TAB_MATCHES });
+  await Promise.all(tabs.map((tab) => (
+    tab.id === undefined ? Promise.resolve() : chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['src/amity-bridge.js'],
+      world: 'ISOLATED',
+    }).catch(() => { /* tab may not allow injection (e.g. chrome:// or a closed tab) */ })
+  )));
+}
+
+chrome.runtime.onInstalled.addListener(() => { void injectIntoExistingAmityTabs(); });
+chrome.runtime.onStartup.addListener(() => { void injectIntoExistingAmityTabs(); });
+
 async function installLinkedInScripts(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },

@@ -4,7 +4,12 @@
   "version": "0.1.0",
   "description": "Connects supported services to Amity through your signed-in browser sessions.",
   "permissions": ["tabs", "scripting"],
-  "host_permissions": ["https://www.linkedin.com/*"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "http://localhost:3000/*",
+    "https://amityatlas-dev.web.app/*",
+    "https://*.amityatlas.com/*"
+  ],
   "background": {
     "service_worker": "src/service-worker.js"
   },
