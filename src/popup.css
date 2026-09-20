@@ -1,0 +1,6 @@
+body { margin: 0; width: 300px; color: #172033; background: #fff; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { padding: 18px; }
+strong { font-size: 16px; }
+p { margin: 8px 0 0; color: #64748b; }
+header { display: flex; align-items: center; gap: 10px; }
+header img { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; }

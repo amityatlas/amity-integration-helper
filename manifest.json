@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Amity Integration Helper",
+  "version": "0.1.0",
+  "description": "Connects supported services to Amity through your signed-in browser sessions.",
+  "permissions": ["tabs", "scripting"],
+  "host_permissions": ["https://www.linkedin.com/*"],
+  "background": {
+    "service_worker": "src/service-worker.js"
+  },
+  "action": {
+    "default_title": "Amity Integration Helper",
+    "default_icon": "icons/amity-icon.png",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "16": "icons/amity-icon.png",
+    "32": "icons/amity-icon.png",
+    "48": "icons/amity-icon.png",
+    "128": "icons/amity-icon.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:3000/*", "https://amityatlas-dev.web.app/*", "https://*.amityatlas.com/*"],
+      "js": ["src/amity-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": ["src/linkedin-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": ["src/linkedin-page.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ]
+}
