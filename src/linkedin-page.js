@@ -23,12 +23,27 @@
     const match = String(headline || '').match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
     return match ? { jobTitle: match[1].trim(), company: match[2].trim() } : { jobTitle: String(headline || '').trim(), company: '' };
   };
+  // LinkedIn doesn't tag an education entry as "high school" vs "university"
+  // — infer it from the degree/school name text instead, then fill our
+  // form's remaining two slots (university, college) positionally from
+  // whatever's left, same as before.
+  const HIGH_SCHOOL_PATTERN = /high\s*school|lise|secondary school|lyc[ée]e|gymnasium/i;
   const educationFrom = (profile) => {
     const entries = profile?.educations || profile?.education || profile?.educationView?.elements || [];
-    const names = (Array.isArray(entries) ? entries : [])
-      .map((entry) => firstString(entry?.schoolName, entry?.school?.name, entry?.school?.localizedName))
-      .filter(Boolean);
-    return { university: names[0] || '', college: names[1] || '' };
+    const parsed = (Array.isArray(entries) ? entries : [])
+      .map((entry) => ({
+        schoolName: firstString(entry?.schoolName, entry?.school?.name, entry?.school?.localizedName),
+        degreeName: firstString(entry?.degreeName, entry?.degree),
+      }))
+      .filter((entry) => entry.schoolName);
+    const isHighSchool = (entry) => HIGH_SCHOOL_PATTERN.test(entry.degreeName) || HIGH_SCHOOL_PATTERN.test(entry.schoolName);
+    const highSchool = parsed.find(isHighSchool);
+    const higherEd = parsed.filter((entry) => entry !== highSchool);
+    return {
+      highSchool: highSchool?.schoolName || '',
+      university: higherEd[0]?.schoolName || '',
+      college: higherEd[1]?.schoolName || '',
+    };
   };
   const preview = (profile, connection) => {
     const firstName = String(text(profile?.firstName)).trim();
