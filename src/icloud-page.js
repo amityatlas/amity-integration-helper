@@ -1,6 +1,15 @@
 (() => {
-  if (window.__AMITY_ICLOUD_PAGE_INSTALLED__) return;
-  window.__AMITY_ICLOUD_PAGE_INSTALLED__ = true;
+  // Build tag for this copy of the script. Install is keyed on it rather than
+  // a plain boolean because a tab can still be running an older copy: main
+  // world scripts survive an extension reload, so a tab opened before an
+  // update keeps the previous build's listener alive. A boolean guard made
+  // that fatal — the old copy claimed the flag, the new copy returned early
+  // and never installed its listener, and the old one ignores the current
+  // begin message, so a sync had nothing listening for it at all.
+  // Note this deliberately uses a different global from the old boolean, so a
+  // stale flag set by a pre-0.2.2 copy cannot block this build.
+  const BUILD = 'v3';
+  if (window.__AMITY_ICLOUD_PAGE__?.build === BUILD) return;
   const PAGE_SOURCE = 'amity-linkedin-page';
   const EXTENSION_SOURCE = 'amity-linkedin-extension';
   const SETUP_VALIDATE_URL = 'https://setup.icloud.com/setup/ws/1/validate';
@@ -310,13 +319,12 @@
     }
   }
 
-  // Shared across every injected copy of this script, so a tab that already
-  // accumulated listeners from an earlier build still runs each sync once
-  // instead of once per listener.
+  // Shared across every injected copy, so even a listener left behind by an
+  // older build cannot start a second run of the same request.
   const handledRequests = window.__AMITY_ICLOUD_HANDLED_REQUESTS__
     || (window.__AMITY_ICLOUD_HANDLED_REQUESTS__ = new Set());
 
-  window.addEventListener('message', (event) => {
+  const handler = (event) => {
     if (event.source !== window || event.data?.source !== PAGE_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V3') return;
     const { requestId } = event.data;
     if (handledRequests.has(requestId)) {
@@ -324,7 +332,16 @@
       return;
     }
     handledRequests.add(requestId);
-    console.info('[Amity iCloud page] begin message received', event.data);
+    console.info('[Amity iCloud page] begin message received', { requestId, build: BUILD });
     void sync(requestId);
-  });
+  };
+
+  // Replace this script's own previous listener instead of stacking another
+  // one. Only a listener that recorded itself here can be removed; a
+  // pre-0.2.2 copy cannot be, which is why the begin message is versioned —
+  // that leaves those copies inert rather than duplicating the sync.
+  const previous = window.__AMITY_ICLOUD_PAGE__;
+  if (previous?.handler) window.removeEventListener('message', previous.handler);
+  window.addEventListener('message', handler);
+  window.__AMITY_ICLOUD_PAGE__ = { build: BUILD, handler };
 })();
