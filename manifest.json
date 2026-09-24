@@ -6,6 +6,7 @@
   "permissions": ["tabs", "scripting"],
   "host_permissions": [
     "https://www.linkedin.com/*",
+    "https://www.icloud.com/contacts/*",
     "http://localhost:3000/*",
     "https://amityatlas-dev.web.app/*",
     "https://*.amityatlas.com/*"
@@ -38,6 +39,17 @@
     {
       "matches": ["https://www.linkedin.com/*"],
       "js": ["src/linkedin-page.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.icloud.com/contacts/*"],
+      "js": ["src/icloud-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.icloud.com/contacts/*"],
+      "js": ["src/icloud-page.js"],
       "run_at": "document_idle",
       "world": "MAIN"
     }

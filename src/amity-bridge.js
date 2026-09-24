@@ -11,11 +11,11 @@ if (!window.__amityBridgeInstalled) {
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.source !== PAGE_SOURCE) return;
     const { type, requestId } = event.data;
-    if (type === 'AMITY_LINKEDIN_PING') {
-      window.postMessage({ source: EXTENSION_SOURCE, type: 'AMITY_LINKEDIN_READY', requestId }, '*');
+    if (type === 'AMITY_LINKEDIN_PING' || type === 'AMITY_ICLOUD_PING') {
+      window.postMessage({ source: EXTENSION_SOURCE, type: type === 'AMITY_LINKEDIN_PING' ? 'AMITY_LINKEDIN_READY' : 'AMITY_ICLOUD_READY', requestId }, '*');
       return;
     }
-    if (type === 'AMITY_LINKEDIN_SYNC' || type === 'AMITY_LINKEDIN_DISCONNECT') {
+    if (type === 'AMITY_LINKEDIN_SYNC' || type === 'AMITY_LINKEDIN_DISCONNECT' || type === 'AMITY_ICLOUD_SYNC' || type === 'AMITY_ICLOUD_DISCONNECT') {
       chrome.runtime.sendMessage(event.data);
     }
   });

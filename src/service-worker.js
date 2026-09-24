@@ -1,8 +1,10 @@
 const LINKEDIN_CONNECTIONS_URL = 'https://www.linkedin.com/mynetwork/invite-connect/connections/';
+const ICLOUD_CONTACTS_URL = 'https://www.icloud.com/contacts/';
 const EXTENSION_SOURCE = 'amity-linkedin-extension';
 const requests = new Map();
 const returnedToAmity = new Set();
 const linkedinTabs = new Map();
+const icloudTabs = new Map();
 const loginListeners = new Map();
 
 async function sendToTab(tabId, message) {
@@ -50,6 +52,19 @@ async function installLinkedInScripts(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ['src/linkedin-page.js'],
+    world: 'MAIN',
+  });
+}
+
+async function installICloudScripts(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['src/icloud-bridge.js'],
+    world: 'ISOLATED',
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['src/icloud-page.js'],
     world: 'MAIN',
   });
 }
@@ -102,6 +117,51 @@ async function startSync(message, sender) {
   }
 }
 
+async function startICloudSync(message, sender) {
+  const amityTabId = sender.tab?.id;
+  if (!amityTabId) return;
+  requests.set(message.requestId, amityTabId);
+
+  const tabs = await chrome.tabs.query({ url: 'https://www.icloud.com/contacts/*' });
+  let tab = tabs.find((candidate) => candidate.active) || tabs[0];
+  if (!tab) tab = await chrome.tabs.create({ url: ICLOUD_CONTACTS_URL, active: true });
+  else {
+    await chrome.tabs.update(tab.id, { active: true });
+    if (!tab.url?.startsWith(ICLOUD_CONTACTS_URL)) {
+      tab = await chrome.tabs.update(tab.id, { url: ICLOUD_CONTACTS_URL });
+    }
+  }
+  icloudTabs.set(message.requestId, tab.id);
+
+  const begin = async () => {
+    const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN', requestId: message.requestId };
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        await installICloudScripts(tab.id);
+        await chrome.tabs.sendMessage(tab.id, payload);
+        return;
+      } catch (_) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    }
+    await sendToTab(amityTabId, {
+      source: EXTENSION_SOURCE,
+      type: 'AMITY_ICLOUD_ERROR',
+      requestId: message.requestId,
+      message: 'The extension could not connect to the iCloud Contacts tab. Reload the extension and iCloud Contacts, then try again.',
+    });
+  };
+  if (tab.status === 'complete') await begin();
+  else {
+    const listener = (tabId, changeInfo) => {
+      if (tabId !== tab.id || changeInfo.status !== 'complete') return;
+      chrome.tabs.onUpdated.removeListener(listener);
+      void begin();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  }
+}
+
 function waitForLogin(requestId) {
   if (loginListeners.has(requestId)) return;
   const linkedInTabId = linkedinTabs.get(requestId);
@@ -129,17 +189,26 @@ function cleanupRequest(requestId) {
   if (listener) chrome.tabs.onUpdated.removeListener(listener);
   loginListeners.delete(requestId);
   linkedinTabs.delete(requestId);
+  icloudTabs.delete(requestId);
   returnedToAmity.delete(requestId);
   requests.delete(requestId);
 }
 
 chrome.runtime.onMessage.addListener((message, sender) => {
-  if (!message?.type?.startsWith('AMITY_LINKEDIN_')) return;
+  if (!message?.type?.startsWith('AMITY_LINKEDIN_') && !message?.type?.startsWith('AMITY_ICLOUD_')) return;
   if (message.type === 'AMITY_LINKEDIN_SYNC') {
     void startSync(message, sender);
     return;
   }
+  if (message.type === 'AMITY_ICLOUD_SYNC') {
+    void startICloudSync(message, sender);
+    return;
+  }
   if (message.type === 'AMITY_LINKEDIN_DISCONNECT') {
+    requests.delete(message.requestId);
+    return;
+  }
+  if (message.type === 'AMITY_ICLOUD_DISCONNECT') {
     requests.delete(message.requestId);
     return;
   }
@@ -150,12 +219,14 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     waitForLogin(message.requestId);
     return;
   }
-  if ((message.type === 'AMITY_LINKEDIN_PROGRESS' || message.type === 'AMITY_LINKEDIN_COMPLETE' || message.type === 'AMITY_LINKEDIN_ERROR')
+  if ((message.type === 'AMITY_LINKEDIN_PROGRESS' || message.type === 'AMITY_LINKEDIN_COMPLETE' || message.type === 'AMITY_LINKEDIN_ERROR'
+    || message.type === 'AMITY_ICLOUD_PROGRESS' || message.type === 'AMITY_ICLOUD_COMPLETE' || message.type === 'AMITY_ICLOUD_ERROR')
     && !returnedToAmity.has(message.requestId)) {
     returnedToAmity.add(message.requestId);
     void focusTab(targetTabId);
   }
-  if (message.type === 'AMITY_LINKEDIN_COMPLETE' || message.type === 'AMITY_LINKEDIN_ERROR') {
+  if (message.type === 'AMITY_LINKEDIN_COMPLETE' || message.type === 'AMITY_LINKEDIN_ERROR'
+    || message.type === 'AMITY_ICLOUD_COMPLETE' || message.type === 'AMITY_ICLOUD_ERROR') {
     cleanupRequest(message.requestId);
   }
 });
