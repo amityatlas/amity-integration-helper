@@ -1,5 +1,5 @@
 const LINKEDIN_CONNECTIONS_URL = 'https://www.linkedin.com/mynetwork/invite-connect/connections/';
-const ICLOUD_CONTACTS_URL = 'https://www.icloud.com/contacts/';
+const ICLOUD_CONTACTS_URL = 'https://www.icloud.com/contacts';
 const EXTENSION_SOURCE = 'amity-linkedin-extension';
 const requests = new Map();
 const returnedToAmity = new Set();
@@ -122,7 +122,7 @@ async function startICloudSync(message, sender) {
   if (!amityTabId) return;
   requests.set(message.requestId, amityTabId);
 
-  const tabs = await chrome.tabs.query({ url: 'https://www.icloud.com/contacts/*' });
+  const tabs = await chrome.tabs.query({ url: 'https://www.icloud.com/contacts*' });
   let tab = tabs.find((candidate) => candidate.active) || tabs[0];
   if (!tab) tab = await chrome.tabs.create({ url: ICLOUD_CONTACTS_URL, active: true });
   else {
