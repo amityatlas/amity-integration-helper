@@ -187,7 +187,7 @@ async function startICloudSync(message, sender) {
   };
 
   const begin = async () => {
-    const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN', requestId: message.requestId };
+    const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN_V2', requestId: message.requestId };
     await debugToAmity(amityTabId, message.requestId, 'begin iCloud sync on tab', { tabId: tab.id });
     const contactsUrlReady = await waitForContactsUrl();
     if (!contactsUrlReady) {

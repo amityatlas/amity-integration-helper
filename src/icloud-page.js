@@ -143,7 +143,7 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== window || event.data?.source !== EXTENSION_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN') return;
+    if (event.source !== window || event.data?.source !== EXTENSION_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V2') return;
     console.info('[Amity iCloud page] begin message received', event.data);
     void sync(event.data.requestId);
   });

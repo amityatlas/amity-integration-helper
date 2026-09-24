@@ -5,7 +5,7 @@ const EXTENSION_SOURCE = 'amity-linkedin-extension';
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.source !== EXTENSION_SOURCE) return;
-  if (message?.type !== 'AMITY_ICLOUD_BEGIN') return;
+  if (message?.type !== 'AMITY_ICLOUD_BEGIN_V2') return;
   window.postMessage(message, '*');
 });
 
