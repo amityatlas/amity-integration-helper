@@ -73,6 +73,9 @@
 
   async function sync(requestId) {
     try {
+      for (let attempt = 0; attempt < 120 && !/\/contacts\/?/.test(location.pathname); attempt += 1) {
+        await wait(1000);
+      }
       if (!/\/contacts\/?/.test(location.pathname)) {
         post('AMITY_ICLOUD_ERROR', requestId, { message: 'Open iCloud Contacts, then try again.' });
         return;
