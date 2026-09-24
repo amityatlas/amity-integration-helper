@@ -133,8 +133,28 @@ async function startICloudSync(message, sender) {
   }
   icloudTabs.set(message.requestId, tab.id);
 
+  const waitForContactsUrl = async () => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const current = await chrome.tabs.get(tab.id).catch(() => null);
+      if (current?.url?.startsWith(ICLOUD_CONTACTS_URL)) return true;
+      tab = await chrome.tabs.update(tab.id, { url: ICLOUD_CONTACTS_URL, active: true });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return false;
+  };
+
   const begin = async () => {
     const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN', requestId: message.requestId };
+    const contactsUrlReady = await waitForContactsUrl();
+    if (!contactsUrlReady) {
+      await sendToTab(amityTabId, {
+        source: EXTENSION_SOURCE,
+        type: 'AMITY_ICLOUD_ERROR',
+        requestId: message.requestId,
+        message: 'iCloud redirected to Dashboard. Open Contacts in iCloud, then click Connect again.',
+      });
+      return;
+    }
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
         await installICloudScripts(tab.id);
