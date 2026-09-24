@@ -25,7 +25,7 @@
     const style = getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   };
-  const textLines = (root = document.body) => clean(root.innerText || '').split(/\n+/).map(clean).filter(Boolean);
+  const textLines = (root = document.body) => String(root.innerText || '').split(/\n+/).map(clean).filter(Boolean);
   const rowCandidates = () => Array.from(document.querySelectorAll('[role="row"], [role="option"], [role="listitem"], li, button, [aria-selected]'))
     .filter(visible)
     .filter((el) => {
@@ -40,7 +40,8 @@
   };
   const parseDetail = (fallbackName) => {
     const lines = textLines(detailRoot());
-    const name = clean(lines.find((line) => line === fallbackName) || lines.find((line) => line.length > 1 && !/^(edit|mobile|home|work|email|phone|address)$/i.test(line)) || fallbackName);
+    const ignored = /^(edit|mobile|home|work|email|phone|address|lists|all contacts|search all contacts|icloud contacts)$/i;
+    const name = clean(lines.find((line) => line === fallbackName) || lines.find((line) => line.length > 1 && !ignored.test(line) && !/(^\+|@)/.test(line)) || fallbackName);
     const phones = [...new Set(lines
       .filter((line) => /(?:\+|00)?[\d\s().-]{7,}/.test(line))
       .map((line) => clean(line.match(/(?:\+|00)?[\d\s().-]{7,}/)?.[0] || ''))
@@ -71,6 +72,16 @@
       importedContactId: null,
     };
   };
+  const captureCurrentDetail = (requestId, contacts) => {
+    const contact = parseDetail('');
+    if (contact.name && (contact.phone.length || contact.email.length || contact.firstName || contact.lastName)) {
+      contacts.set(contact.id, contact);
+      debug(requestId, 'current detail captured', { name: contact.name, phones: contact.phone.length, emails: contact.email.length, contacts: contacts.size });
+      return true;
+    }
+    debug(requestId, 'current detail not captured', { bodyText: String(document.body.innerText || '').slice(0, 500) });
+    return false;
+  };
   const scrollContainer = () => Array.from(document.querySelectorAll('[role="listbox"], [role="grid"], [class*="list" i], [class*="scroll" i], div'))
     .filter((el) => visible(el) && el.scrollHeight > el.clientHeight + 20)
     .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0] || document.scrollingElement;
@@ -90,6 +101,8 @@
       debug(requestId, 'contacts path ready', { url: location.href });
       const seenRows = new Set();
       const contacts = new Map();
+      captureCurrentDetail(requestId, contacts);
+      post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
       const scroller = scrollContainer();
       debug(requestId, 'scroll container selected', { hasScroller: Boolean(scroller), scrollHeight: scroller?.scrollHeight, clientHeight: scroller?.clientHeight });
       let stablePasses = 0;
