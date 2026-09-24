@@ -140,7 +140,13 @@ async function startICloudSync(message, sender) {
   const amityTabId = sender.tab?.id;
   if (!amityTabId) return;
   requests.set(message.requestId, amityTabId);
-  await debugToAmity(amityTabId, message.requestId, 'sync received from Amity', { amityTabId });
+  // Report the running build up front: an unpacked extension does not
+  // auto-update, so a stale load is indistinguishable from a broken one
+  // unless the version is in the log.
+  await debugToAmity(amityTabId, message.requestId, 'sync received from Amity', {
+    amityTabId,
+    extensionVersion: chrome.runtime.getManifest().version,
+  });
 
   const tabs = await chrome.tabs.query({ url: 'https://www.icloud.com/contacts*' });
   await debugToAmity(amityTabId, message.requestId, 'queried existing iCloud contacts tabs', { count: tabs.length, urls: tabs.map((candidate) => candidate.url) });
@@ -173,7 +179,7 @@ async function startICloudSync(message, sender) {
   };
 
   const begin = async () => {
-    const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN_V2', requestId: message.requestId };
+    const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN_V3', requestId: message.requestId };
     await debugToAmity(amityTabId, message.requestId, 'begin iCloud sync on tab', { tabId: tab.id });
     const contactsUrlReady = await waitForContactsUrl();
     if (!contactsUrlReady) {

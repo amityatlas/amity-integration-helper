@@ -317,7 +317,7 @@
     || (window.__AMITY_ICLOUD_HANDLED_REQUESTS__ = new Set());
 
   window.addEventListener('message', (event) => {
-    if (event.source !== window || event.data?.source !== PAGE_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V2') return;
+    if (event.source !== window || event.data?.source !== PAGE_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V3') return;
     const { requestId } = event.data;
     if (handledRequests.has(requestId)) {
       console.info('[Amity iCloud page] duplicate begin ignored', { requestId });
