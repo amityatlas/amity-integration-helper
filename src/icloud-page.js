@@ -118,6 +118,9 @@
         if (scroller) scroller.scrollTop = Math.min(scroller.scrollTop + Math.max(240, scroller.clientHeight * 0.85), scroller.scrollHeight);
         await wait(300);
       }
+      if (contacts.size === 0) {
+        debug(requestId, 'sync found zero contacts', { url: location.href, path: location.pathname, bodyText: clean(document.body.innerText || '').slice(0, 500) });
+      }
       debug(requestId, 'sync complete', { contacts: contacts.size });
       post('AMITY_ICLOUD_COMPLETE', requestId, { items: [...contacts.values()], loaded: contacts.size, total: contacts.size });
     } catch (error) {

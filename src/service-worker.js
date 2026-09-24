@@ -72,6 +72,26 @@ async function installICloudScripts(tabId) {
   console.log('[Amity iCloud helper] installing scripts', { tabId });
   await chrome.scripting.executeScript({
     target: { tabId },
+    func: () => {
+      try {
+        delete globalThis.__AMITY_ICLOUD_BRIDGE_INSTALLED__;
+        delete window.__AMITY_ICLOUD_PAGE_INSTALLED__;
+      } catch (_) {
+        globalThis.__AMITY_ICLOUD_BRIDGE_INSTALLED__ = false;
+        window.__AMITY_ICLOUD_PAGE_INSTALLED__ = false;
+      }
+    },
+    world: 'MAIN',
+  }).catch(() => { /* page may be navigating */ });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      try { delete globalThis.__AMITY_ICLOUD_BRIDGE_INSTALLED__; } catch (_) { globalThis.__AMITY_ICLOUD_BRIDGE_INSTALLED__ = false; }
+    },
+    world: 'ISOLATED',
+  }).catch(() => { /* page may be navigating */ });
+  await chrome.scripting.executeScript({
+    target: { tabId },
     files: ['src/icloud-bridge.js'],
     world: 'ISOLATED',
   });
