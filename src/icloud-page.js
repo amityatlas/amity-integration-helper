@@ -3,6 +3,7 @@
   window.__AMITY_ICLOUD_PAGE_INSTALLED__ = true;
   const PAGE_SOURCE = 'amity-linkedin-page';
   const EXTENSION_SOURCE = 'amity-linkedin-extension';
+  const SETUP_VALIDATE_URL = 'https://setup.icloud.com/setup/ws/1/validate';
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const post = (type, requestId, payload = {}) => window.postMessage({ source: EXTENSION_SOURCE, type, requestId, ...payload }, '*');
   const debug = (requestId, message, extra = {}) => {
@@ -19,6 +20,158 @@
     const parts = clean(name).split(' ').filter(Boolean);
     return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') };
   };
+
+  // --- iCloud web API -------------------------------------------------------
+  // The iCloud Contacts web app reads every contact from a single internal
+  // endpoint, exactly like LinkedIn's Voyager API. Scraping the rendered DOM
+  // instead is both far slower and unreliable (the list virtualises, and
+  // details only exist for the row that is currently selected), so the API is
+  // the primary path here and the DOM scrape is kept only as a fallback.
+
+  // The app's own startup call already carries the account's web service host
+  // and every required param, and the Resource Timing buffer records it. That
+  // is more reliable than reconstructing the params ourselves.
+  const configFromResourceTimings = () => {
+    const entries = performance.getEntriesByType('resource') || [];
+    const match = entries
+      .map((entry) => entry.name)
+      .filter((url) => /contactsws\.icloud\.com/.test(url))
+      .pop();
+    if (!match) return null;
+    const url = new URL(match);
+    const dsid = url.searchParams.get('dsid');
+    if (!dsid) return null;
+    return {
+      origin: url.origin,
+      dsid,
+      clientBuildNumber: url.searchParams.get('clientBuildNumber') || '',
+      clientMasteringNumber: url.searchParams.get('clientMasteringNumber') || '',
+      clientId: url.searchParams.get('clientId') || '',
+      via: 'resource-timing',
+    };
+  };
+
+  const configFromValidate = async (requestId) => {
+    // POST is what the web client itself uses; some deployments answer GET
+    // only, so try both before giving up.
+    for (const method of ['POST', 'GET']) {
+      try {
+        const response = await fetch(SETUP_VALIDATE_URL, { method, credentials: 'include' });
+        debug(requestId, 'validate response', { method, status: response.status });
+        if (response.status === 401 || response.status === 421) return { signedOut: true };
+        if (!response.ok) continue;
+        const data = await response.json();
+        const url = data?.webservices?.contacts?.url;
+        const dsid = data?.dsInfo?.dsid;
+        if (!url || !dsid) {
+          debug(requestId, 'validate payload missing contacts service', { hasUrl: Boolean(url), hasDsid: Boolean(dsid) });
+          continue;
+        }
+        return {
+          origin: new URL(url).origin,
+          dsid: String(dsid),
+          clientBuildNumber: '',
+          clientMasteringNumber: '',
+          clientId: '',
+          via: `validate:${method}`,
+        };
+      } catch (error) {
+        debug(requestId, 'validate request failed', { method, message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return null;
+  };
+
+  const discoverConfig = async (requestId) => {
+    const fromTimings = configFromResourceTimings();
+    if (fromTimings) {
+      debug(requestId, 'config discovered', { via: fromTimings.via, origin: fromTimings.origin, hasBuildNumber: Boolean(fromTimings.clientBuildNumber) });
+      return fromTimings;
+    }
+    debug(requestId, 'no contacts request in resource timings, falling back to validate');
+    const fromValidate = await configFromValidate(requestId);
+    if (fromValidate?.signedOut) return fromValidate;
+    if (fromValidate) debug(requestId, 'config discovered', { via: fromValidate.via, origin: fromValidate.origin });
+    else debug(requestId, 'config discovery failed');
+    return fromValidate;
+  };
+
+  const startupUrl = (config) => {
+    const params = new URLSearchParams({
+      dsid: config.dsid,
+      clientVersion: '2.1',
+      locale: 'en_US',
+      order: 'last,first',
+    });
+    if (config.clientBuildNumber) params.set('clientBuildNumber', config.clientBuildNumber);
+    if (config.clientMasteringNumber) params.set('clientMasteringNumber', config.clientMasteringNumber);
+    if (config.clientId) params.set('clientId', config.clientId);
+    return `${config.origin}/co/startup?${params}`;
+  };
+
+  const addressLocation = (contact) => {
+    const address = (contact?.streetAddresses || [])[0]?.field || {};
+    return clean([address.city, address.country].filter(Boolean).join(', '));
+  };
+
+  const toPreview = (contact) => {
+    const firstName = clean(contact?.firstName);
+    const lastName = clean(contact?.lastName);
+    const company = clean(contact?.companyName);
+    const name = clean(`${firstName} ${lastName}`) || company;
+    if (!name) return null;
+    const phone = [...new Set((contact?.phones || []).map((entry) => clean(entry?.field)).filter(Boolean))];
+    const email = [...new Set((contact?.emailAddresses || []).map((entry) => clean(entry?.field).toLowerCase()).filter(Boolean))];
+    const id = contact?.contactId || contact?.etag || hash([name, phone.join(','), email.join(',')].join('|'));
+    return {
+      id: `icloud:${id}`,
+      name,
+      firstName,
+      lastName,
+      phone,
+      email,
+      company,
+      location: addressLocation(contact),
+      // iCloud photo URLs need the iCloud session to load, so they would break
+      // in the Amity app. Leave the avatar empty and let Amity draw initials.
+      avatar: '',
+      importedContactId: null,
+    };
+  };
+
+  const syncViaApi = async (requestId) => {
+    const config = await discoverConfig(requestId);
+    if (config?.signedOut) {
+      post('AMITY_ICLOUD_ERROR', requestId, { message: 'Please sign in to iCloud, then try again.' });
+      return 'handled';
+    }
+    if (!config) return null;
+    const url = startupUrl(config);
+    debug(requestId, 'requesting contacts', { url: url.replace(/dsid=[^&]+/, 'dsid=***') });
+    const response = await fetch(url, {
+      credentials: 'include',
+      headers: { accept: 'application/json' },
+    });
+    debug(requestId, 'contacts response', { status: response.status });
+    if (response.status === 401 || response.status === 421) {
+      post('AMITY_ICLOUD_ERROR', requestId, { message: 'Please sign in to iCloud, then try again.' });
+      return 'handled';
+    }
+    if (!response.ok) {
+      debug(requestId, 'contacts request rejected', { status: response.status });
+      return null;
+    }
+    const data = await response.json();
+    const raw = Array.isArray(data?.contacts) ? data.contacts : [];
+    debug(requestId, 'contacts payload parsed', { rawContacts: raw.length, withPhotos: raw.filter((entry) => entry?.photo).length });
+    const items = raw.map(toPreview).filter(Boolean);
+    debug(requestId, 'contacts mapped', { items: items.length, skipped: raw.length - items.length });
+    if (!items.length && raw.length) return null;
+    post('AMITY_ICLOUD_COMPLETE', requestId, { items, loaded: items.length, total: items.length });
+    return 'handled';
+  };
+
+  // --- DOM fallback ---------------------------------------------------------
   const visible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -86,6 +239,47 @@
     .filter((el) => visible(el) && el.scrollHeight > el.clientHeight + 20)
     .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0] || document.scrollingElement;
 
+  const syncViaDom = async (requestId) => {
+    debug(requestId, 'falling back to DOM scrape');
+    const seenRows = new Set();
+    const contacts = new Map();
+    captureCurrentDetail(requestId, contacts);
+    post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
+    const scroller = scrollContainer();
+    debug(requestId, 'scroll container selected', { hasScroller: Boolean(scroller), scrollHeight: scroller?.scrollHeight, clientHeight: scroller?.clientHeight });
+    let stablePasses = 0;
+    for (let pass = 0; pass < 80 && stablePasses < 5; pass += 1) {
+      const before = contacts.size;
+      const rows = rowCandidates();
+      debug(requestId, 'scan pass', { pass, rows: rows.length, contacts: contacts.size, stablePasses });
+      for (const row of rows) {
+        const label = clean(row.innerText || row.getAttribute('aria-label') || '');
+        if (!label || seenRows.has(label)) continue;
+        seenRows.add(label);
+        row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        row.click();
+        await wait(160);
+        const contact = parseDetail(label);
+        if (contact.name && (contact.phone.length || contact.email.length || contact.firstName || contact.lastName)) {
+          contacts.set(contact.id, contact);
+          debug(requestId, 'contact captured', { name: contact.name, phones: contact.phone.length, emails: contact.email.length, contacts: contacts.size });
+        }
+        if (contacts.size % 10 === 0) {
+          post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
+        }
+      }
+      post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
+      stablePasses = contacts.size === before ? stablePasses + 1 : 0;
+      if (scroller) scroller.scrollTop = Math.min(scroller.scrollTop + Math.max(240, scroller.clientHeight * 0.85), scroller.scrollHeight);
+      await wait(300);
+    }
+    if (contacts.size === 0) {
+      debug(requestId, 'DOM scrape found zero contacts', { url: location.href, path: location.pathname, bodyText: clean(document.body.innerText || '').slice(0, 500) });
+    }
+    debug(requestId, 'sync complete', { contacts: contacts.size, via: 'dom' });
+    post('AMITY_ICLOUD_COMPLETE', requestId, { items: [...contacts.values()], loaded: contacts.size, total: contacts.size });
+  };
+
   async function sync(requestId) {
     try {
       debug(requestId, 'sync begin', { url: location.href, path: location.pathname });
@@ -99,43 +293,17 @@
         return;
       }
       debug(requestId, 'contacts path ready', { url: location.href });
-      const seenRows = new Set();
-      const contacts = new Map();
-      captureCurrentDetail(requestId, contacts);
-      post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
-      const scroller = scrollContainer();
-      debug(requestId, 'scroll container selected', { hasScroller: Boolean(scroller), scrollHeight: scroller?.scrollHeight, clientHeight: scroller?.clientHeight });
-      let stablePasses = 0;
-      for (let pass = 0; pass < 80 && stablePasses < 5; pass += 1) {
-        const before = contacts.size;
-        const rows = rowCandidates();
-        debug(requestId, 'scan pass', { pass, rows: rows.length, contacts: contacts.size, stablePasses });
-        for (const row of rows) {
-          const label = clean(row.innerText || row.getAttribute('aria-label') || '');
-          if (!label || seenRows.has(label)) continue;
-          seenRows.add(label);
-          row.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-          row.click();
-          await wait(160);
-          const contact = parseDetail(label);
-          if (contact.name && (contact.phone.length || contact.email.length || contact.firstName || contact.lastName)) {
-            contacts.set(contact.id, contact);
-            debug(requestId, 'contact captured', { name: contact.name, phones: contact.phone.length, emails: contact.email.length, contacts: contacts.size });
-          }
-          if (contacts.size % 10 === 0) {
-            post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
-          }
-        }
-        post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
-        stablePasses = contacts.size === before ? stablePasses + 1 : 0;
-        if (scroller) scroller.scrollTop = Math.min(scroller.scrollTop + Math.max(240, scroller.clientHeight * 0.85), scroller.scrollHeight);
-        await wait(300);
+      let apiResult = null;
+      try {
+        apiResult = await syncViaApi(requestId);
+      } catch (error) {
+        debug(requestId, 'API sync threw, falling back', { message: error instanceof Error ? error.message : String(error) });
       }
-      if (contacts.size === 0) {
-        debug(requestId, 'sync found zero contacts', { url: location.href, path: location.pathname, bodyText: clean(document.body.innerText || '').slice(0, 500) });
+      if (apiResult === 'handled') {
+        debug(requestId, 'sync complete', { via: 'api' });
+        return;
       }
-      debug(requestId, 'sync complete', { contacts: contacts.size });
-      post('AMITY_ICLOUD_COMPLETE', requestId, { items: [...contacts.values()], loaded: contacts.size, total: contacts.size });
+      await syncViaDom(requestId);
     } catch (error) {
       debug(requestId, 'sync exception', { message: error instanceof Error ? error.message : String(error) });
       post('AMITY_ICLOUD_ERROR', requestId, { message: error instanceof Error ? error.message : 'iCloud Contacts sync failed.' });
@@ -143,7 +311,7 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== window || event.data?.source !== EXTENSION_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V2') return;
+    if (event.source !== window || event.data?.source !== PAGE_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V2') return;
     console.info('[Amity iCloud page] begin message received', event.data);
     void sync(event.data.requestId);
   });
