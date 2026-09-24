@@ -310,9 +310,21 @@
     }
   }
 
+  // Shared across every injected copy of this script, so a tab that already
+  // accumulated listeners from an earlier build still runs each sync once
+  // instead of once per listener.
+  const handledRequests = window.__AMITY_ICLOUD_HANDLED_REQUESTS__
+    || (window.__AMITY_ICLOUD_HANDLED_REQUESTS__ = new Set());
+
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.source !== PAGE_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN_V2') return;
+    const { requestId } = event.data;
+    if (handledRequests.has(requestId)) {
+      console.info('[Amity iCloud page] duplicate begin ignored', { requestId });
+      return;
+    }
+    handledRequests.add(requestId);
     console.info('[Amity iCloud page] begin message received', event.data);
-    void sync(event.data.requestId);
+    void sync(requestId);
   });
 })();
