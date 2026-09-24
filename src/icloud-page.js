@@ -5,6 +5,10 @@
   const EXTENSION_SOURCE = 'amity-linkedin-extension';
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const post = (type, requestId, payload = {}) => window.postMessage({ source: EXTENSION_SOURCE, type, requestId, ...payload }, '*');
+  const debug = (requestId, message, extra = {}) => {
+    console.info('[Amity iCloud page]', message, { requestId, ...extra });
+    post('AMITY_ICLOUD_DEBUG', requestId, { message: `[page] ${message}`, ...extra });
+  };
   const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   const hash = (value) => {
     let h = 0;
@@ -73,20 +77,27 @@
 
   async function sync(requestId) {
     try {
+      debug(requestId, 'sync begin', { url: location.href, path: location.pathname });
       for (let attempt = 0; attempt < 120 && !/\/contacts\/?/.test(location.pathname); attempt += 1) {
+        if (attempt % 5 === 0) debug(requestId, 'waiting for contacts path', { attempt, url: location.href, path: location.pathname });
         await wait(1000);
       }
       if (!/\/contacts\/?/.test(location.pathname)) {
+        debug(requestId, 'not on contacts path after wait', { url: location.href, path: location.pathname });
         post('AMITY_ICLOUD_ERROR', requestId, { message: 'Open iCloud Contacts, then try again.' });
         return;
       }
+      debug(requestId, 'contacts path ready', { url: location.href });
       const seenRows = new Set();
       const contacts = new Map();
       const scroller = scrollContainer();
+      debug(requestId, 'scroll container selected', { hasScroller: Boolean(scroller), scrollHeight: scroller?.scrollHeight, clientHeight: scroller?.clientHeight });
       let stablePasses = 0;
       for (let pass = 0; pass < 80 && stablePasses < 5; pass += 1) {
         const before = contacts.size;
-        for (const row of rowCandidates()) {
+        const rows = rowCandidates();
+        debug(requestId, 'scan pass', { pass, rows: rows.length, contacts: contacts.size, stablePasses });
+        for (const row of rows) {
           const label = clean(row.innerText || row.getAttribute('aria-label') || '');
           if (!label || seenRows.has(label)) continue;
           seenRows.add(label);
@@ -96,6 +107,7 @@
           const contact = parseDetail(label);
           if (contact.name && (contact.phone.length || contact.email.length || contact.firstName || contact.lastName)) {
             contacts.set(contact.id, contact);
+            debug(requestId, 'contact captured', { name: contact.name, phones: contact.phone.length, emails: contact.email.length, contacts: contacts.size });
           }
           if (contacts.size % 10 === 0) {
             post('AMITY_ICLOUD_PROGRESS', requestId, { items: [...contacts.values()], loaded: contacts.size, total: null });
@@ -106,14 +118,17 @@
         if (scroller) scroller.scrollTop = Math.min(scroller.scrollTop + Math.max(240, scroller.clientHeight * 0.85), scroller.scrollHeight);
         await wait(300);
       }
+      debug(requestId, 'sync complete', { contacts: contacts.size });
       post('AMITY_ICLOUD_COMPLETE', requestId, { items: [...contacts.values()], loaded: contacts.size, total: contacts.size });
     } catch (error) {
+      debug(requestId, 'sync exception', { message: error instanceof Error ? error.message : String(error) });
       post('AMITY_ICLOUD_ERROR', requestId, { message: error instanceof Error ? error.message : 'iCloud Contacts sync failed.' });
     }
   }
 
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.data?.source !== EXTENSION_SOURCE || event.data?.type !== 'AMITY_ICLOUD_BEGIN') return;
+    console.info('[Amity iCloud page] begin message received', event.data);
     void sync(event.data.requestId);
   });
 })();

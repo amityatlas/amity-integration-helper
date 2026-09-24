@@ -11,6 +11,18 @@ async function sendToTab(tabId, message) {
   try { await chrome.tabs.sendMessage(tabId, message); } catch (_) { /* tab may be navigating */ }
 }
 
+async function debugToAmity(tabId, requestId, message, extra = {}) {
+  console.log('[Amity iCloud helper]', message, { requestId, ...extra });
+  if (!tabId) return;
+  await sendToTab(tabId, {
+    source: EXTENSION_SOURCE,
+    type: 'AMITY_ICLOUD_DEBUG',
+    requestId,
+    message,
+    ...extra,
+  });
+}
+
 async function focusTab(tabId) {
   try {
     const tab = await chrome.tabs.update(tabId, { active: true });
@@ -57,6 +69,7 @@ async function installLinkedInScripts(tabId) {
 }
 
 async function installICloudScripts(tabId) {
+  console.log('[Amity iCloud helper] installing scripts', { tabId });
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ['src/icloud-bridge.js'],
@@ -121,23 +134,33 @@ async function startICloudSync(message, sender) {
   const amityTabId = sender.tab?.id;
   if (!amityTabId) return;
   requests.set(message.requestId, amityTabId);
+  await debugToAmity(amityTabId, message.requestId, 'sync received from Amity', { amityTabId });
 
   const tabs = await chrome.tabs.query({ url: 'https://www.icloud.com/contacts*' });
+  await debugToAmity(amityTabId, message.requestId, 'queried existing iCloud contacts tabs', { count: tabs.length, urls: tabs.map((candidate) => candidate.url) });
   let tab = tabs.find((candidate) => candidate.active) || tabs[0];
-  if (!tab) tab = await chrome.tabs.create({ url: ICLOUD_CONTACTS_URL, active: true });
+  if (!tab) {
+    await debugToAmity(amityTabId, message.requestId, 'creating iCloud contacts tab', { url: ICLOUD_CONTACTS_URL });
+    tab = await chrome.tabs.create({ url: ICLOUD_CONTACTS_URL, active: true });
+  }
   else {
+    await debugToAmity(amityTabId, message.requestId, 'using existing iCloud tab', { tabId: tab.id, url: tab.url, status: tab.status });
     await chrome.tabs.update(tab.id, { active: true });
     if (!tab.url?.startsWith(ICLOUD_CONTACTS_URL)) {
+      await debugToAmity(amityTabId, message.requestId, 'navigating existing iCloud tab to contacts', { from: tab.url, to: ICLOUD_CONTACTS_URL });
       tab = await chrome.tabs.update(tab.id, { url: ICLOUD_CONTACTS_URL });
     }
   }
   icloudTabs.set(message.requestId, tab.id);
+  await debugToAmity(amityTabId, message.requestId, 'iCloud tab selected', { tabId: tab.id, url: tab.url, status: tab.status });
 
   const waitForContactsUrl = async () => {
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const current = await chrome.tabs.get(tab.id).catch(() => null);
+      await debugToAmity(amityTabId, message.requestId, 'checking iCloud tab URL', { attempt, url: current?.url, status: current?.status });
       if (current?.url?.startsWith(ICLOUD_CONTACTS_URL)) return true;
       tab = await chrome.tabs.update(tab.id, { url: ICLOUD_CONTACTS_URL, active: true });
+      await debugToAmity(amityTabId, message.requestId, 'forced iCloud tab back to contacts', { attempt, url: ICLOUD_CONTACTS_URL });
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
     return false;
@@ -145,8 +168,10 @@ async function startICloudSync(message, sender) {
 
   const begin = async () => {
     const payload = { source: EXTENSION_SOURCE, type: 'AMITY_ICLOUD_BEGIN', requestId: message.requestId };
+    await debugToAmity(amityTabId, message.requestId, 'begin iCloud sync on tab', { tabId: tab.id });
     const contactsUrlReady = await waitForContactsUrl();
     if (!contactsUrlReady) {
+      await debugToAmity(amityTabId, message.requestId, 'iCloud contacts URL not ready after retries', { tabId: tab.id });
       await sendToTab(amityTabId, {
         source: EXTENSION_SOURCE,
         type: 'AMITY_ICLOUD_ERROR',
@@ -157,13 +182,17 @@ async function startICloudSync(message, sender) {
     }
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
+        await debugToAmity(amityTabId, message.requestId, 'installing scripts and sending begin', { attempt, tabId: tab.id });
         await installICloudScripts(tab.id);
         await chrome.tabs.sendMessage(tab.id, payload);
+        await debugToAmity(amityTabId, message.requestId, 'begin message delivered to iCloud tab', { attempt, tabId: tab.id });
         return;
       } catch (_) {
+        await debugToAmity(amityTabId, message.requestId, 'failed to deliver begin to iCloud tab, retrying', { attempt, tabId: tab.id });
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
     }
+    await debugToAmity(amityTabId, message.requestId, 'could not connect to iCloud tab after retries', { tabId: tab.id });
     await sendToTab(amityTabId, {
       source: EXTENSION_SOURCE,
       type: 'AMITY_ICLOUD_ERROR',
@@ -173,6 +202,7 @@ async function startICloudSync(message, sender) {
   };
   if (tab.status === 'complete') await begin();
   else {
+    await debugToAmity(amityTabId, message.requestId, 'waiting for iCloud tab complete', { tabId: tab.id, status: tab.status });
     const listener = (tabId, changeInfo) => {
       if (tabId !== tab.id || changeInfo.status !== 'complete') return;
       chrome.tabs.onUpdated.removeListener(listener);
