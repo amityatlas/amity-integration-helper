@@ -19,9 +19,32 @@
     return new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString();
   };
   const firstString = (...values) => values.map(text).find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+  // A headline is free text, and the single English "<title> at <company>"
+  // pattern this used to be missed most of them: it required whitespace on
+  // both sides of the separator, so "Software Engineer @Trendyol" produced no
+  // company at all, and it read the Turkish "<company> şirketinde <title>"
+  // backwards. Mirrors parseHeadline() in the Amity frontend — keep the two
+  // in step, since whichever answers first wins.
+  const HEADLINE_SEGMENT = /\s*[|·•]\s*/;
+  const HEADLINE_TURKISH = /^(.+?)\s+(?:şirketinde|sirketinde|firmasında|firmasinda|bünyesinde|bunyesinde)\s+(.+)$/i;
+  const HEADLINE_ENGLISH = /^(.+?)\s+at\s+(.+)$/i;
+  const HEADLINE_AT_SIGN = /^(.+?)\s+@\s*(.+)$/;
+  const headlineClean = (value) => String(value || '').replace(/^@\s*/, '').replace(/\s+/g, ' ').trim();
   const headlineParts = (headline) => {
-    const match = String(headline || '').match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
-    return match ? { jobTitle: match[1].trim(), company: match[2].trim() } : { jobTitle: String(headline || '').trim(), company: '' };
+    const full = String(headline || '').replace(/\s+/g, ' ').trim();
+    if (!full) return { jobTitle: '', company: '' };
+    // Only the first segment describes the job; "| PhD in Bioinformatics |
+    // Computational Biology" is self-description, not an employer.
+    const segment = (full.split(HEADLINE_SEGMENT)[0] || full).trim();
+    const turkish = segment.match(HEADLINE_TURKISH);
+    // Turkish puts the company first, so it has to be checked before any rule
+    // that would read the two halves the other way round.
+    if (turkish) return { company: headlineClean(turkish[1]), jobTitle: headlineClean(turkish[2]) };
+    const english = segment.match(HEADLINE_ENGLISH);
+    if (english) return { jobTitle: headlineClean(english[1]), company: headlineClean(english[2]) };
+    const sigil = segment.match(HEADLINE_AT_SIGN);
+    if (sigil) return { jobTitle: headlineClean(sigil[1]), company: headlineClean(sigil[2]) };
+    return { jobTitle: headlineClean(segment), company: '' };
   };
   // LinkedIn doesn't tag an education entry as "high school" vs "university"
   // — infer it from the degree/school name text instead, then fill our
