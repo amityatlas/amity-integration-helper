@@ -118,15 +118,44 @@
     return `${config.origin}/co/startup?${params}`;
   };
 
+  const primaryAddress = (contact) => (contact?.streetAddresses || [])[0]?.field || {};
+
   const addressLocation = (contact) => {
-    const address = (contact?.streetAddresses || [])[0]?.field || {};
+    const address = primaryAddress(contact);
     return clean([address.city, address.country].filter(Boolean).join(', '));
+  };
+
+  const normalizeBirthday = (contact) => {
+    const birthday = contact?.birthday || contact?.birthDate || contact?.dateOfBirth;
+    const fromParts = (value) => {
+      const year = Number(value?.year || value?.yyyy || value?.y);
+      const month = Number(value?.month || value?.mm || value?.m);
+      const day = Number(value?.day || value?.date || value?.dd || value?.d);
+      if (!month || !day) return '';
+      const safeYear = year && year > 0 ? year : 1904;
+      return `${String(safeYear).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    };
+
+    if (typeof birthday === 'string') return clean(birthday).slice(0, 10);
+    if (birthday && typeof birthday === 'object') {
+      const formatted = fromParts(birthday);
+      if (formatted) return formatted;
+    }
+
+    const dateFields = Array.isArray(contact?.dates) ? contact.dates : [];
+    const birthdayField = dateFields.find((entry) => /birth|birthday/i.test(clean(entry?.label || entry?.localizedLabel || entry?.type)));
+    if (typeof birthdayField?.field === 'string') return clean(birthdayField.field).slice(0, 10);
+    if (birthdayField?.field && typeof birthdayField.field === 'object') return fromParts(birthdayField.field);
+    return '';
   };
 
   const toPreview = (contact) => {
     const firstName = clean(contact?.firstName);
     const lastName = clean(contact?.lastName);
     const company = clean(contact?.companyName);
+    const address = primaryAddress(contact);
+    const city = clean(address.city);
+    const country = clean(address.country);
     const name = clean(`${firstName} ${lastName}`) || company;
     if (!name) return null;
     const phone = [...new Set((contact?.phones || []).map((entry) => clean(entry?.field)).filter(Boolean))];
@@ -141,6 +170,9 @@
       email,
       company,
       location: addressLocation(contact),
+      city,
+      country,
+      birthday: normalizeBirthday(contact),
       // iCloud photo URLs need the iCloud session to load, so they would break
       // in the Amity app. Leave the avatar empty and let Amity draw initials.
       avatar: '',
