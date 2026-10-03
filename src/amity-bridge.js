@@ -16,7 +16,8 @@ if (!window.__amityBridgeInstalled) {
       window.postMessage({ source: EXTENSION_SOURCE, type: type === 'AMITY_LINKEDIN_PING' ? 'AMITY_LINKEDIN_READY' : 'AMITY_ICLOUD_READY', requestId }, '*');
       return;
     }
-    if (type === 'AMITY_LINKEDIN_SYNC' || type === 'AMITY_LINKEDIN_DISCONNECT' || type === 'AMITY_ICLOUD_SYNC' || type === 'AMITY_ICLOUD_DISCONNECT') {
+    if (type === 'AMITY_LINKEDIN_SYNC' || type === 'AMITY_LINKEDIN_DISCONNECT' || type === 'AMITY_ICLOUD_SYNC' || type === 'AMITY_ICLOUD_DISCONNECT'
+      || type === 'AMITY_LINKEDIN_STATUS' || type === 'AMITY_ICLOUD_STATUS') {
       if (type.startsWith('AMITY_ICLOUD_')) console.info('[Amity iCloud bridge] forwarding to service worker', { type, requestId });
       chrome.runtime.sendMessage(event.data);
     }

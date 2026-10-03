@@ -88,6 +88,78 @@ async function installICloudScripts(tabId) {
   });
 }
 
+// --- Readiness probes -------------------------------------------------------
+// Amity disables Connect/Refresh until the service it would scrape is actually
+// reachable, so it needs an answer to "is a tab open, and is that session
+// signed in?" without the side effects startSync has. Nothing here opens,
+// focuses or navigates a tab: a probe that fixed the problem it is reporting
+// would make the disabled state meaningless.
+
+// Runs inside the LinkedIn tab. Voyager rejects any request without the CSRF
+// token carried in the JSESSIONID cookie, so a missing cookie already means
+// signed out and saves the round trip.
+function probeLinkedInSession() {
+  try {
+    const csrf = document.cookie.match(/(?:^|;\s*)JSESSIONID=([^;]+)/)?.[1]?.replace(/"/g, '');
+    if (!csrf) return Promise.resolve({ loggedIn: false, reason: 'no-csrf-cookie' });
+    return fetch('/voyager/api/me', {
+      credentials: 'include',
+      headers: { accept: 'application/vnd.linkedin.normalized+json+2.1', 'csrf-token': csrf },
+    })
+      .then((response) => ({ loggedIn: response.ok, reason: response.ok ? 'ok' : `http-${response.status}` }))
+      .catch(() => ({ loggedIn: false, reason: 'fetch-failed' }));
+  } catch (_) {
+    return Promise.resolve({ loggedIn: false, reason: 'probe-threw' });
+  }
+}
+
+// Runs inside the iCloud tab, in the MAIN world, because setup.icloud.com is
+// not in host_permissions — the request only passes CORS as the page's own
+// origin, which is how icloud-page.js already reaches it. 401/421 is Apple's
+// signed-out answer.
+function probeICloudSession() {
+  const validate = 'https://setup.icloud.com/setup/ws/1/validate';
+  const attempt = (method) => fetch(validate, { method, credentials: 'include' })
+    .then((response) => {
+      if (response.status === 401 || response.status === 421) return { loggedIn: false, reason: `http-${response.status}` };
+      if (response.ok) return { loggedIn: true, reason: 'ok' };
+      return null;
+    })
+    .catch(() => null);
+  return attempt('POST')
+    .then((result) => result || attempt('GET'))
+    .then((result) => result || { loggedIn: false, reason: 'validate-unreachable' });
+}
+
+async function probeInTab(tabUrlPattern, func, world) {
+  const tabs = await chrome.tabs.query({ url: tabUrlPattern });
+  const tab = tabs.find((candidate) => candidate.id !== undefined);
+  if (!tab) return { tabOpen: false, loggedIn: false, reason: 'no-tab' };
+  try {
+    const [injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world, func });
+    const result = injection?.result || {};
+    return { tabOpen: true, loggedIn: Boolean(result.loggedIn), reason: result.reason || 'unknown' };
+  } catch (error) {
+    // The tab can be mid-navigation, discarded, or showing an error page.
+    return { tabOpen: true, loggedIn: false, reason: 'inject-failed' };
+  }
+}
+
+async function reportStatus(message, sender) {
+  const amityTabId = sender.tab?.id;
+  if (!amityTabId) return;
+  const linkedIn = message.type === 'AMITY_LINKEDIN_STATUS';
+  const status = linkedIn
+    ? await probeInTab('https://www.linkedin.com/*', probeLinkedInSession, 'ISOLATED')
+    : await probeInTab('https://www.icloud.com/*', probeICloudSession, 'MAIN');
+  await sendToTab(amityTabId, {
+    source: EXTENSION_SOURCE,
+    type: linkedIn ? 'AMITY_LINKEDIN_STATUS_RESULT' : 'AMITY_ICLOUD_STATUS_RESULT',
+    requestId: message.requestId,
+    ...status,
+  });
+}
+
 async function startSync(message, sender) {
   const amityTabId = sender.tab?.id;
   if (!amityTabId) return;
@@ -258,6 +330,10 @@ function cleanupRequest(requestId) {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (!message?.type?.startsWith('AMITY_LINKEDIN_') && !message?.type?.startsWith('AMITY_ICLOUD_')) return;
+  if (message.type === 'AMITY_LINKEDIN_STATUS' || message.type === 'AMITY_ICLOUD_STATUS') {
+    void reportStatus(message, sender);
+    return;
+  }
   if (message.type === 'AMITY_LINKEDIN_SYNC') {
     void startSync(message, sender);
     return;

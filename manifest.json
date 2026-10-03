@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Amity Integration Helper",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Connects supported services to Amity through your signed-in browser sessions.",
-  "permissions": ["tabs", "scripting"],
+  "permissions": [
+    "tabs",
+    "scripting"
+  ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://www.icloud.com/*",
@@ -27,29 +30,51 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://localhost:3000/*", "https://amityatlas-dev.web.app/*", "https://*.amityatlas.com/*"],
-      "js": ["src/amity-bridge.js"],
+      "matches": [
+        "http://localhost:3000/*",
+        "https://amityatlas-dev.web.app/*",
+        "https://*.amityatlas.com/*"
+      ],
+      "js": [
+        "src/amity-bridge.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.linkedin.com/*"],
-      "js": ["src/linkedin-bridge.js"],
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "src/linkedin-bridge.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.linkedin.com/*"],
-      "js": ["src/linkedin-page.js"],
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "src/linkedin-page.js"
+      ],
       "run_at": "document_idle",
       "world": "MAIN"
     },
     {
-      "matches": ["https://www.icloud.com/*"],
-      "js": ["src/icloud-bridge.js"],
+      "matches": [
+        "https://www.icloud.com/*"
+      ],
+      "js": [
+        "src/icloud-bridge.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.icloud.com/*"],
-      "js": ["src/icloud-page.js"],
+      "matches": [
+        "https://www.icloud.com/*"
+      ],
+      "js": [
+        "src/icloud-page.js"
+      ],
       "run_at": "document_idle",
       "world": "MAIN"
     }
